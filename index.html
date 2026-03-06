@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <title>Snake Online - ID Tizimi</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { margin: 0; background: #05050a; overflow: hidden; font-family: sans-serif; color: white; }
+        canvas { display: block; }
+        #menu { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); padding: 30px; border-radius: 15px; text-align: center; border: 2px solid #00ff88; }
+        input { padding: 10px; border-radius: 5px; border: none; width: 100px; font-size: 18px; text-align: center; }
+        button { padding: 10px 20px; background: #00ff88; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin: 5px; }
+        #ui { position: absolute; top: 20px; left: 20px; display: none; pointer-events: none; }
+        .bonus { color: #f1c40f; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div id="menu">
+        <h2>Iloncha Online</h2>
+        <input type="number" id="roomId" placeholder="ID (masalan: 1)"> <br><br>
+        <button onclick="startHost()">Xona Ochish</button>
+        <button onclick="startJoin()">Xonaga Kirish</button>
+    </div>
+
+    <div id="ui">
+        <div>Ball: <span id="score">0</span></div>
+        <div id="bonus-status"></div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        let peer, conn;
+        let myId = "Snake_" + Math.floor(Math.random() * 999);
+        let players = {};
+        let foods = [];
+        let bonuses = [];
+        let myScore = 0;
+        let mySegments = Array(15).fill({x: 300, y: 300});
+        let myColor = `hsl(${Math.random()*360}, 80%, 50%)`;
+        let speedTimer = 0, doubleTimer = 0;
+
+        // 1. XONA OCHISH (HOST)
+        function startHost() {
+            const id = document.getElementById("roomId").value;
+            if(!id) return alert("ID yozing!");
+            peer = new Peer("snake-room-" + id);
+            peer.on('open', () => {
+                setupGame();
+                console.log("Xona ochildi: " + id);
+            });
+            peer.on('connection', c => {
+                conn = c;
+                setupConn();
+            });
+        }
+
+        // 2. XONAGA KIRISH (JOIN)
+        function startJoin() {
+            const id = document.getElementById("roomId").value;
+            if(!id) return alert("ID yozing!");
+            peer = new Peer();
+            peer.on('open', () => {
+                conn = peer.connect("snake-room-" + id);
+                setupConn();
+                setupGame();
+            });
+        }
+
+        function setupConn() {
+            conn.on('data', data => {
+                if(data.type === "sync") {
+                    players[data.id] = data;
+                }
+            });
+        }
+
+        function setupGame() {
+            document.getElementById("menu").style.display = "none";
+            document.getElementById("ui").style.display = "block";
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            loop();
+        }
+
+        // 3. O'YIN MANTIQI
+        let mouse = {x: 0, y: 0};
+        window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
+        function loop() {
+            ctx.fillStyle = "#05050a";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Harakat
+            let head = {...mySegments[0]};
+            let angle = Math.atan2(mouse.y - head.y, mouse.x - head.x);
+            let currentSpeed = speedTimer > Date.now() ? 7 : 3.5;
+            
+            head.x += Math.cos(angle) * currentSpeed;
+            head.y += Math.sin(angle) * currentSpeed;
+
+            mySegments.unshift(head);
+            mySegments.pop();
+
+            // Ovqatlar (Faqat Host yaratadi, lekin biz hozir soddalashtirdik)
+            if(Math.random() < 0.05 && foods.length < 40) {
+                foods.push({x: Math.random()*canvas.width, y: Math.random()*canvas.height});
+            }
+
+            // Ovqat yeyish
+            foods.forEach((f, i) => {
+                if(Math.hypot(head.x - f.x, head.y - f.y) < 15) {
+                    myScore += (doubleTimer > Date.now() ? 20 : 10);
+                    mySegments.push({...mySegments[mySegments.length-1]});
+                    foods.splice(i, 1);
+                }
+            });
+
+            // Bonus yaratish
+            if(Math.random() < 0.005 && bonuses.length < 2) {
+                bonuses.push({x: Math.random()*canvas.width, y: Math.random()*canvas.height, type: Math.random() > 0.5 ? 'S' : '2X'});
+            }
+
+            // Bonus yeyish
+            bonuses.forEach((b, i) => {
+                if(Math.hypot(head.x - b.x, head.y - b.y) < 20) {
+                    if(b.type === 'S') speedTimer = Date.now() + 30000;
+                    if(b.type === '2X') doubleTimer = Date.now() + 30000;
+                    bonuses.splice(i, 1);
+                }
+            });
+
+            // Chizish: Ovqat
+            foods.forEach(f => { ctx.fillStyle = "#ff0055"; ctx.beginPath(); ctx.arc(f.x, f.y, 5, 0, Math.PI*2); ctx.fill(); });
+            
+            // Chizish: Bonus
+            bonuses.forEach(b => { 
+                ctx.fillStyle = b.type === 'S' ? "#00f2ff" : "#f1c40f"; 
+                ctx.beginPath(); ctx.arc(b.x, b.y, 10, 0, Math.PI*2); ctx.fill(); 
+            });
+
+            // Chizish: O'zim
+            mySegments.forEach((s, i) => {
+                ctx.fillStyle = myColor; ctx.globalAlpha = i===0 ? 1 : 0.4;
+                ctx.beginPath(); ctx.arc(s.x, s.y, 10, 0, Math.PI*2); ctx.fill();
+            });
+
+            // Chizish: Raqiblar
+            Object.values(players).forEach(p => {
+                p.segments.forEach(s => {
+                    ctx.fillStyle = p.color; ctx.globalAlpha = 0.5;
+                    ctx.beginPath(); ctx.arc(s.x, s.y, 10, 0, Math.PI*2); ctx.fill();
+                });
+                // Urilganda o'lish (Sodda collision)
+                if(Math.hypot(head.x - p.segments[0].x, head.y - p.segments[0].y) < 15) {
+                    location.reload(); // O'lganda yangilash
+                }
+            });
+
+            // Ma'lumot yuborish
+            if(conn && conn.open) {
+                conn.send({type: "sync", id: myId, segments: mySegments, color: myColor, score: myScore});
+            }
+
+            document.getElementById("score").innerText = myScore;
+            
+            // Bonus UI
+            let bText = "";
+            if(speedTimer > Date.now()) bText += "<span class='bonus'>TEZLIK ⚡</span> ";
+            if(doubleTimer > Date.now()) bText += "<span class='bonus'>2X BALL ⭐</span>";
+            document.getElementById("bonus-status").innerHTML = bText;
+
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
